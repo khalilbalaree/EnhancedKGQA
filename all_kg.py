@@ -1,6 +1,5 @@
 import numpy as np
 import torch
-import torch.nn as nn
 
 class KG():
     def __init__(self, path = './ComplEx_MetaQA_full/'):
@@ -73,8 +72,8 @@ class KG():
     def bfs_path(self, start, goal):
         explored = [] 
         queue = [[start]] 
-        if start == goal: 
-            return []
+        # if start == goal: 
+        #     return []
         while queue: 
             path = queue.pop(0) 
             node = path[-1] 
@@ -91,11 +90,25 @@ class KG():
     
     def get_candidates_embeddings(self, head, k):
         candidate_matrix = []
-        neighbors = self.dfs_neighbours(head, k)
+        if k == 0:
+            neighbors = self.entity_dict.keys()
+        else:
+            neighbors = self.dfs_neighbours(head, k)
         for n in neighbors:
-            e = entity_embeddings[entity_dict[n]]
+            e = self.entity_embeddings[self.entity_dict[n]]
             candidate_matrix.append(e)
         return candidate_matrix, list(neighbors)
+
+    def find_span_question_exhaust(self, q):
+        spans = []
+        q_split = q.split()
+        l = len(q_split)
+        for s in range(l):
+            for e in range(s+1,l+1):
+                span = ' '.join(q_split[s:e])
+                if span in self.entity_dict.keys():
+                    spans.append(span)
+        return spans
 
 
 class Complex():
@@ -150,12 +163,13 @@ class Complex():
 
 # test
 kg = KG()
-# head = 'Spencer\'s Mountain'
-# tail = '1947'
-# k = 3
+# head = '44 Inch Chest'
+# tail = 'Drama'
+# k = 2
 # path = kg.bfs_path(head, tail)
 # neighbors = kg.dfs_neighbours(head, k)
 # print('Hop: [%s] -> [%s] = %d' % (head, tail, len(path)-1))
+# print(path)
 # neighbors.remove(head)
 # print(len(neighbors))
 # # print('Heighbours from [%s] with k = %d: %s' % (head, k, neighbors.__str__()))
@@ -167,14 +181,18 @@ kg = KG()
 entity_embeddings, relation_embeddings, entity_dict, relation_dict = kg.load_kg_embeddings()
 
 head = 'Lloyd\'s of London'
+head1 = 'The Russia House'
 relation = 'starred_actors'
-this_r = torch.FloatTensor(relation_embeddings[relation_dict[relation]])
-this_e = torch.FloatTensor(entity_embeddings[entity_dict[head]])
-pretrained_embeddings, candidate_dict = kg.get_candidates_embeddings(head, k=2)
-candidate_embedding= nn.Embedding.from_pretrained(torch.FloatTensor(pretrained_embeddings), freeze=True)
 
-complex = Complex()
-score = complex.score(this_e.unsqueeze(0), this_r.unsqueeze(0), candidate_embedding)
+this_r = torch.FloatTensor([relation_embeddings[relation_dict[relation]], relation_embeddings[relation_dict[relation]]]).to('cuda')
+this_e = torch.FloatTensor([entity_embeddings[entity_dict[head]],entity_embeddings[entity_dict[head1]]]).to('cuda')
+pretrained_embeddings, candidate_dict = kg.get_candidates_embeddings(head1, k=0) #when k=0 find all entities in KG, else find head k neighbours
+import torch.nn as nn
+candidate_embedding= nn.Embedding.from_pretrained(torch.FloatTensor(pretrained_embeddings), freeze=True).to('cuda')
+
+complex = Complex('cuda')
+score = complex.score(this_e, this_r, candidate_embedding)
+print(score)
 top_results = complex.get_top_k(score, 1)
 for _, idx in zip(top_results[0], top_results[1]):
     print(candidate_dict[idx.item()])
