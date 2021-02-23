@@ -1,3 +1,6 @@
 
 data/
 ComplEx_MetaQA_full/
+*.pyc
+*.0
+*.yaml

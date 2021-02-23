@@ -87,7 +87,9 @@ class EntityPredictor(pl.LightningModule):
         self._klloss = torch.nn.KLDivLoss(reduction='sum')
         self.bce = torch.nn.BCEWithLogitsLoss()
 
-        self.linear = nn.Linear(800, 43234).to(dev)
+        # TODO: method 1
+        # self.linear = nn.Linear(800, 43234).to(dev)
+
 
     def kge_loss(self, scores, targets):
         # loss = torch.mean(scores*targets)
@@ -393,8 +395,10 @@ class EntityPredictor(pl.LightningModule):
         rel_embedding = rel_embedding.view(rel_embedding.shape[0], -1)
         rel_embedding = self.reshape_pos(rel_embedding)
 
+        k = 1 # 1hop for now
         pred = complex.score(self.head_embedding_list, rel_embedding, self.candidate_embedding)
-
+        neighbor_one_hot = torch.tensor(kg.get_neighbour_onehot(heads=self.head_words, ks=[k]*len(self.head_words),smoothing=SMOOTH)).to(dev)
+        pred = torch.mul(pred, neighbor_one_hot)
         # ans_label = ((1.0 - 0.5) * ans_label) + (1.0 / ans_label.size(1))
         loss_ans = self.bce(pred, ans_label)  # self.kge_loss(pred, ans_label)
 
@@ -464,7 +468,7 @@ tokenizer = AutoTokenizer.from_pretrained(BERT_MODEL_NAME)
 
 print(tokenizer)
 """load embeddings"""
-from EnhancedKGQA_main.all_kg import KG, Complex
+from all_kg import KG, Complex
 kg = KG()
 complex = Complex('cuda')
 entity_embeddings, relation_embeddings, entity_dict, relation_dict = kg.load_kg_embeddings()
@@ -477,7 +481,8 @@ print("entity_embeddings", entity_embeddings.shape)
 print("relation_embeddings", relation_embeddings.shape)
 
 N_EPOCHS = 500
-BATCH_SIZE = 100
+BATCH_SIZE = 32
+SMOOTH = 0.0
 data_module = DataModule(entity_dict, train_df[:], val_df[:], tokenizer, BATCH_SIZE)
 data_module.setup()
 
