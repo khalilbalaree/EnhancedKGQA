@@ -1,17 +1,21 @@
 
+from networkx.algorithms import matching
 import torch
 import torch.nn as nn
+from torch.nn.modules.activation import ReLU, Threshold
 from transformers import BertTokenizer, BertModel, AutoTokenizer, AutoModel
 from sklearn.model_selection import train_test_split
 import pytorch_lightning as pl
 import torch.nn.functional as F
+import itertools
+import numpy as np
 
 from process_data import Dataset, DataModule,prepare_data
 LABEL_Columns = ["question", "entity","answer","start_idx","end_idx","sentence_length"]
 dev = 'cuda'
 
 class EntityPredictor(pl.LightningModule):
-    def __init__(self, n_classes: int, entity_embeddings, candidate_embedding, entity_dict, steps_per_epoch=None,
+    def __init__(self, n_classes: int, relation_embedding, candidate_embedding, entity_dict, steps_per_epoch=None,
                  n_epochs=None):
         super().__init__()
         self.bert = AutoModel.from_pretrained(BERT_MODEL_NAME, return_dict=True)
@@ -19,7 +23,7 @@ class EntityPredictor(pl.LightningModule):
         # BertModel.from_pretrained(BERT_MODEL_NAME, return_dict=True)
 
         self.qa_outputs = nn.Linear(self.bert.config.hidden_size, self.bert.config.num_labels)  # 768 to 32
-        self.cls_output = nn.Linear(self.bert.config.hidden_size, 3)
+        self.cls_output = nn.Linear(self.bert.config.hidden_size, 18)
         self.n_epochs = n_epochs
         self.steps_per_epoch = steps_per_epoch
         self.criterion = nn.CrossEntropyLoss(ignore_index=64)
@@ -27,14 +31,16 @@ class EntityPredictor(pl.LightningModule):
         self.total_acc_cls = 0
         self.train_counter = 0
         self.total_loss = 0
+        self.cls_acc = 0
 
         self.val_counter = 0
         self.total_val_loss = 0
 
         self.total_val_acc = 0
+        self.total_val_acc1 = 0
 
         # TODO ans pred....
-        self.entity_embeddings = entity_embeddings
+        self.relation_embedding = relation_embedding # used for relation matching
         self.entity_dict = entity_dict
         # TODO needs reset for each step
         self.head_coord_list = torch.tensor([[0, 0]]).to(dev)
@@ -81,11 +87,21 @@ class EntityPredictor(pl.LightningModule):
             nn.BatchNorm2d(1).to(dev),
 
         )
+        
+        self.apply_nonlinar = nn.Sequential(
+            nn.Linear(768, 512).to(dev),
+            nn.ReLU().to(dev),
+            nn.Linear(512, self.relation_dim).to(dev)
+        )
+        
 
         self.candidate_embedding = candidate_embedding
         self.loss = self.kge_loss
         self._klloss = torch.nn.KLDivLoss(reduction='sum')
         self.bce = torch.nn.BCEWithLogitsLoss()
+        self.sigmoid = nn.Sigmoid()
+
+        self.hop = 3
 
         # TODO: method 1
         # self.linear = nn.Linear(800, 43234).to(dev)
@@ -121,12 +137,13 @@ class EntityPredictor(pl.LightningModule):
             # print(start_logits.shape, end_logits.shape)
             start_loss = self.criterion(start_logits, start_idx_label)
             end_loss = self.criterion(end_logits, end_idx_label)
-            cls_loss = self.criterion(cls_output, cls_label)
-            loss = (start_loss + end_loss + cls_loss) / 3
+            # cls_loss = self.criterion(cls_output, cls_label)
+            # loss = (start_loss + end_loss + cls_loss) / 3
+            loss = (start_loss + end_loss) / 2
 
         return loss, start_logits, end_logits, cls_output, pooled_outputs, sequence_output
 
-    def training_step(self, batch, batch_idx):
+    def training_step(self, batch, batch_idx, optimizer_idx):
         input_ids = batch["input_ids"]
         attention_mask = batch["attention_mask"]
         start_idx_label = batch["start_idx_label"]
@@ -197,11 +214,12 @@ class EntityPredictor(pl.LightningModule):
         # correct = torch.all(torch.eq(pred, label), dim=1).sum()
         acc = correct / BATCH_SIZE
 
-        acc_cls = (torch.argmax(cls_output, dim=1) == cls_label).sum() / BATCH_SIZE
+        # acc_cls = (torch.argmax(cls_output, dim=1) == cls_label).sum() / BATCH_SIZE
         # print(1 + '1')
         self.log("training loss", loss, prog_bar=True, logger=True)
         self.log("acc", acc, prog_bar=True, logger=True)
-        self.log("cls_acc", acc_cls, prog_bar=True, logger=True)
+        # self.log("cls_acc", acc_cls, prog_bar=True, logger=True)
+
 
         # todo 结合部分开始！！！！！
         # TODO get head embeddings
@@ -241,14 +259,40 @@ class EntityPredictor(pl.LightningModule):
         rel_embedding = rel_embedding.view(rel_embedding.shape[0], -1)
         rel_embedding = self.reshape_pos(rel_embedding)
         # print(rel_embedding.shape)
+        # rel_embedding = self.apply_nonlinar(question_embedding)
 
         # print(self.head_words)
-
+        # print(questions)
+        cls_label = torch.tensor(kg.path_relations_batch(self.head_words, ans_label, self.hop)).to(dev)
+        cls_loss = self.bce(cls_output, cls_label)
+        self.log("cls_loss", cls_loss, prog_bar=True, logger=True)
         pred = complex.score(self.head_embedding_list, rel_embedding, self.candidate_embedding)
 
+        # _,indices = cls_label.topk(self.hop)
+        # relation_indices = indices.tolist()
+        # print(questions, relation_indices)
+
+        # k = 2 # 1hop for now
+        # _,indices = cls_label.topk(k)
+        # relation_indices = indices.tolist()
+        # # print(questions, relation_indices)
+        # batch_onehot = []
+        # for i, r in enumerate(relation_indices):
+        #     this_candidates = []
+        #     all_poss = []
+        #     for this_k in range(1,k+1):
+        #         all_poss += [p for p in itertools.product(r, repeat=this_k)]
+        #     for each_permute in all_poss:
+        #         kg.find_tails_from_head(self.head_words[i], each_permute, this_candidates)
+        #     # print(set(this_candidates))
+        #     this_onehot = kg.candidates2onehot(set(this_candidates))
+        #     batch_onehot.append(this_onehot)
+        # onehot = torch.tensor(np.stack(batch_onehot)).to(dev)
+      
         # ans_label = ((1.0 - 0.5) * ans_label) + (1.0 / ans_label.size(1))
         loss_ans = self.bce(pred, ans_label)  # self.kge_loss(pred, ans_label)
-
+        # weight = ((1.0-0.1)*ans_label) + (0.1 / ans_label.size(1))
+        # loss_ans = F.binary_cross_entropy_with_logits(pred, ans_label, pos_weight=weight)
         '''
         print(questions[20])
 
@@ -271,7 +315,10 @@ class EntityPredictor(pl.LightningModule):
 
         self.total_loss += loss_ans.item()
         self.train_counter += 1
-        return loss_ans  # {"loss": loss}
+        if optimizer_idx == 0:
+            return loss_ans
+        if optimizer_idx == 1:
+            return cls_loss
 
     def training_epoch_end(self, validation_step_outputs):
         self.log("total_loss", self.total_loss / self.train_counter, prog_bar=True, logger=True)
@@ -350,11 +397,11 @@ class EntityPredictor(pl.LightningModule):
         # correct = torch.all(torch.eq(pred, label), dim=1).sum()
         acc = correct / BATCH_SIZE
 
-        acc_cls = (torch.argmax(cls_output, dim=1) == cls_label).sum() / BATCH_SIZE
+        # acc_cls = (torch.argmax(cls_output, dim=1) == cls_label).sum() / BATCH_SIZE
         # print(1 + '1')
         self.log("training loss", loss, prog_bar=True, logger=True)
         self.log("acc", acc, prog_bar=True, logger=True)
-        self.log("cls_acc", acc_cls, prog_bar=True, logger=True)
+        # self.log("cls_acc", acc_cls, prog_bar=True, logger=True)
 
         # todo 结合部分开始！！！！！
         # TODO get head embeddings
@@ -394,23 +441,78 @@ class EntityPredictor(pl.LightningModule):
         rel_embedding = self.hidden2rel_conv(question_embedding)  # TODO batch_size * 768
         rel_embedding = rel_embedding.view(rel_embedding.shape[0], -1)
         rel_embedding = self.reshape_pos(rel_embedding)
+        # rel_embedding = self.apply_nonlinar(question_embedding)
+        
 
-        k = 1 # 1hop for now
+        # relation matching
+        # threshold = 0.9
+        # _lambda = 0.1
+        # ttt = torch.mm(rel_embedding,self.relation_embedding)
+        # ttt = self.sigmoid(ttt)
+        # ttt = torch.where(ttt > threshold, 1.0, 0.0).unsqueeze(1)
+        # # print(ttt.shape)
+        # a = torch.FloatTensor(kg.relation_matching(self.head_words)).to(dev)
+        # # print(a.shape)
+        # rel_score = torch.bmm(ttt, a.transpose(1,2)).squeeze(1) * _lambda
+        # print('shape', rel_score.shape)
+        
+        all_permute = False
+        # k = 1 # 1hop for now
+        _,indices = cls_output.topk(self.hop)
+        relation_indices = indices.tolist()
+        # print(questions, relation_indices)
+        batch_onehot = []
+        for i, r in enumerate(relation_indices):
+            this_candidates = []
+            all_poss = []
+            if all_permute:
+                for this_k in range(1,self.hop+1):
+                    all_poss += [p for p in itertools.product(r, repeat=this_k)]
+            else:
+                all_poss = [p for p in itertools.product(r, repeat=self.hop)]
+            for each_permute in all_poss:
+                kg.find_tails_from_head(self.head_words[i], each_permute, this_candidates)
+            # print(set(this_candidates))
+            this_onehot = kg.candidates2onehot(set(this_candidates))
+            batch_onehot.append(this_onehot)
+        onehot = torch.tensor(np.stack(batch_onehot)).to(dev)
+        # print(onehot.shape)
+        # print('just a test', torch.sum(onehot * ans_label, dim=1))
+        a = torch.where(torch.sum(onehot * ans_label, dim=1)>0, 1.0, 0.0)
+        cls_acc = sum(a)/a.shape[0]
+        self.cls_acc = cls_acc.item()
+
         pred = complex.score(self.head_embedding_list, rel_embedding, self.candidate_embedding)
-        neighbor_one_hot = torch.tensor(kg.get_neighbour_onehot(heads=self.head_words, ks=[k]*len(self.head_words),smoothing=SMOOTH)).to(dev)
-        pred = torch.mul(pred, neighbor_one_hot)
+        sigmoid_pred = self.sigmoid(pred)
+        # print(sigmoid_pred)
+        # neighbor_one_hot = torch.tensor(kg.get_neighbour_onehot(heads=self.head_words, ks=[k]*len(self.head_words),smoothing=SMOOTH)).to(dev)
+        sigmoid_pred = sigmoid_pred * onehot
+
         # ans_label = ((1.0 - 0.5) * ans_label) + (1.0 / ans_label.size(1))
         loss_ans = self.bce(pred, ans_label)  # self.kge_loss(pred, ans_label)
 
         # calculate acc
+        topk = 3
         local_count = 0
         acc = 0
-        for i in torch.argmax(pred, 1):
-            if ans_label[local_count][i] == 1:
-                acc += 1
+        acc1 = 0
+        values, indices = torch.topk(sigmoid_pred, topk)
+        for item in zip(values, indices):
+            for index, i in enumerate(item[1]):
+                i = i.item()
+                if ans_label[local_count][i] == 1:
+                    acc1 += 1
+                    if index==0:
+                        acc += 1
+                    break
+        # for i in torch.argmax(sigmoid_pred, 1):
+        #     if ans_label[local_count][i] == 1:
+        #         acc += 1
             local_count += 1
         acc = acc / local_count
+        acc1 = acc1 / local_count
         self.total_val_acc += acc
+        self.total_val_acc1 += acc1
 
         '''
         print(questions[0])
@@ -437,10 +539,14 @@ class EntityPredictor(pl.LightningModule):
     def validation_epoch_end(self, validation_step_outputs):
         self.log("total_val_loss", self.total_val_loss / self.val_counter, prog_bar=True, logger=True)
         print(self.total_val_loss / self.val_counter)
-        print("total_val_acc", self.total_val_acc / self.val_counter)
+        print("top1_acc", self.total_val_acc / self.val_counter)
+        print("top3_acc", self.total_val_acc1 / self.val_counter)
+        print("cls_acc", self.cls_acc)
         self.total_val_loss = 0
         self.val_counter = 0
         self.total_val_acc = 0
+        self.total_val_acc1 = 0
+        self.cls_acc = 0
 
     def test_step(self, batch, batch_idx):
         input_ids = batch["input_ids"]
@@ -454,7 +560,10 @@ class EntityPredictor(pl.LightningModule):
         return loss
 
     def configure_optimizers(self):
-        return torch.optim.Adam(self.parameters(), lr=0.00001)
+        optimizer1 = torch.optim.Adam(self.parameters(), lr=0.0001)
+        optimizer2 = torch.optim.Adam(self.parameters(), lr=0.0001)
+        # scheduler = torch.optim.lr_scheduler.ExponentialLR(optimizer1,0.9)
+        return optimizer1, optimizer2 #, [scheduler]
 
 
 df = prepare_data()
@@ -470,25 +579,29 @@ print(tokenizer)
 """load embeddings"""
 from all_kg import KG, Complex
 kg = KG()
-complex = Complex('cuda')
+complex = Complex()
 entity_embeddings, relation_embeddings, entity_dict, relation_dict = kg.load_kg_embeddings()
 
 # TODO 先获取所有的candidtae embeddings 训练时候用， 一直保持不变
-pretrained_embeddings, candidate_dict = kg.get_candidates_embeddings(
+pretrained_embeddings, _ = kg.get_candidates_embeddings(
     k=0)  # when k=0 find all entities in KG, else find head k neighbours
-candidate_embedding = nn.Embedding.from_pretrained(torch.FloatTensor(pretrained_embeddings), freeze=True).to('cuda')
+candidate_embedding = nn.Embedding.from_pretrained(torch.FloatTensor(pretrained_embeddings), freeze=1).to('cuda')
 print("entity_embeddings", entity_embeddings.shape)
-print("relation_embeddings", relation_embeddings.shape)
+# print("relation_embeddings", relation_embeddings.shape)
 
-N_EPOCHS = 500
+# relation_matrix, _ = kg.get_all_relations_embeddings()
+relation_embedding = torch.FloatTensor(relation_embeddings).to('cuda').transpose(1,0)
+print("relation_embedding", relation_embedding.shape)
+
+N_EPOCHS = 100
 BATCH_SIZE = 32
-SMOOTH = 0.0
-data_module = DataModule(entity_dict, train_df[:], val_df[:], tokenizer, BATCH_SIZE)
+SMOOTH = 0
+data_module = DataModule(entity_dict, train_df[:2000], val_df[1000:1100], tokenizer, BATCH_SIZE)
 data_module.setup()
 
 model = EntityPredictor(
     n_classes=2,
-    entity_embeddings=entity_embeddings,
+    relation_embedding=relation_embedding,
     candidate_embedding=candidate_embedding,
     entity_dict=entity_dict,
     steps_per_epoch=len(train_df) // BATCH_SIZE,
