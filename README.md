@@ -13,7 +13,7 @@ Prepare for directories:
 
 (1) The data file contains a subfolder must in "hop1 or hop2 or hop3", the subfiles are MetaQA data for each hop (such as "qa_train_3hop.txt").
 
-(2) In all_kg_new.py file, the default subfolder for load pre-trained kg models are "./ComplEx_MetaQA_full/" and "./data/MetaQA/train.txt"
+(2) In all_kg_new.py file, the default subfolder for load pre-trained kg models are "./EnhancedKGQA_main/ComplEx_MetaQA_full/" and "./EnhancedKGQA_main/data/MetaQA/train.txt"
 
 (3) In all_kg_new.py file, the default subfolder for load pre-trained Complex is "./EnhancedKGQA_main/ComplEx_MetaQA_full/"
 ```bash
