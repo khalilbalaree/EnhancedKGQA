@@ -10,7 +10,7 @@ In order to run the code, first download data.zip and pretrained_model.zip from 
 
 The data.zip has the data files need to put into /data subfolder
 
-The pretrained_model.zip has the pre-trained model files need to put into ./EnhancedKGQA_main/ComplEx_MetaQA_full/
+The pretrained_model.zip has the pre-trained model files that in "EmbedKGQA/pretrained_models/embeddings/ComplEx_MetaQA_full/", which need to be put into ./EnhancedKGQA_main/ComplEx_MetaQA_full/
 ## Excution for 1 & 2 hop dataset
 Prepare for directories: 
 
