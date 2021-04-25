@@ -19,7 +19,9 @@ python train.py
 ## Excution for 3 hop dataset
 
 ```
-python train
+python train3hop-cls-segment.py
+
+Note: It will load the file 'all_kg_new.py'
 ```
 
 ## Acknowledgement
