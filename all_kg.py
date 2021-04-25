@@ -4,7 +4,7 @@ import torch
 import networkx as nx
 
 class KG():
-    def __init__(self, path='./ComplEx_MetaQA_full/'):
+    def __init__(self, path='./EnhancedKGQA_main/ComplEx_MetaQA_full/'):
         self.r_em_path = path + 'R.npy'
         self.e_em_path = path + 'E.npy'
         self.r_dict_path = path + 'relations.dict'
@@ -13,7 +13,7 @@ class KG():
         self.entity_embeddings, self.relation_embeddings, self.entity_dict, self.relation_dict = self.load_kg_embeddings()
 
         self.graph1 = nx.MultiDiGraph()
-        self.build_graph('./data/MetaQA/train.txt')
+        self.build_graph('./EnhancedKGQA_main/data/MetaQA/train.txt')
 
         self.num_entity = len(self.entity_dict)
         self.num_relation = len(self.relation_dict)
