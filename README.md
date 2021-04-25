@@ -8,6 +8,9 @@
 
 In order to run the code, first download data.zip and pretrained_model.zip from https://drive.google.com/drive/folders/1RlqGBMo45lTmWz9MUPTq-0KcjSd3ujxc?usp=sharing. Unzip these files in the main directory.
 
+The data.zip has the data files need to put into /data subfolder
+
+The pretrained_model.zip has the pre-trained model files need to put into ./EnhancedKGQA_main/ComplEx_MetaQA_full/
 ## Excution for 1 & 2 hop dataset
 Prepare for directories: 
 
