@@ -8,13 +8,18 @@
 
 In order to run the code, first download data.zip and pretrained_model.zip from https://drive.google.com/drive/folders/1RlqGBMo45lTmWz9MUPTq-0KcjSd3ujxc?usp=sharing. Unzip these files in the main directory.
 
-## Excution
+## Excution for 1 & 2 hop dataset
 
 ```bash
 pip install transformers
 pip install pytorch-lightning
 
 python train.py
+```
+## Excution for 3 hop dataset
+
+```
+python train
 ```
 
 ## Acknowledgement
