@@ -22,6 +22,7 @@ python train.py
 python train3hop-cls-segment.py
 
 Note: It will load the file 'all_kg_new.py'
+Prepare for directories: The data file contains a subfolder must in "hop1 or hop2 or hop3", the subfiles are MetaQA data for each hop.
 ```
 
 ## Acknowledgement
